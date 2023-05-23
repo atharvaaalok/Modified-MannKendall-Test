@@ -5,7 +5,7 @@ Released on MATLAB FileExchange
 
 ## Use
 
-The modified Mann-Kendall test is a hypothesis test that determines whether a given sequence of data has a trend. \\
+The modified Mann-Kendall test is a hypothesis test that determines whether a given sequence of data has a trend.<br/>
 It builds upon the original Mann-Kendall test but is more powerful as it can account for autocorrelations within the data.
 
 ## References
