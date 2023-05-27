@@ -33,7 +33,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CALCULATE THE KENDALL TAU VALUE
-    
+    tic
     % Notation taken from: 3) Hamed, K. H., & Rao, A. R. (1998)
     S = 0;
     
@@ -43,12 +43,22 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         end
     end
     
+%     for i = 1: n-1
+%         j = i+1: n;
+%         phew = sign(X(j) - X(i));
+%         S = S + sum(phew);
+%     end
+    
+    
     % Calculate kendall's rank correlation coefficient - tau
     tau = S / (n * (n-1) / 2);
 
+    a = toc;
+    fprintf("a = %f\n", a);
 
-    %% CALCULATE VARIANCE OF KENDALL TAU UNCORRECTED FOR AUTOCORRELATION
     
+    %% CALCULATE VARIANCE OF KENDALL TAU UNCORRECTED FOR AUTOCORRELATION
+    tic
     % Correction for tied ranks taken from:
     % 2) Kendall, M. G. (1948) edition 5, chapter 4, page 66
     % 4) Hamed, K. H. (2008)
@@ -63,6 +73,8 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
     Y = [Y, Y(end) + 1];
     prev_counter = 1;
     current_counter = 1;
+
+    
     for i_Y = 2: n+1
         if Y(i_Y) == Y(i_Y - 1)
             current_counter = current_counter + 1;
@@ -76,11 +88,15 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         end
 
     end
+    
 
     var_S_tie_correction = sum(tied_ranks .* (tied_ranks - 1) .* (2*tied_ranks + 5) / 18);
 
     % Calculate variance corrected for ties but without considering autocorrelation
     var_S_noAC = var_S_notie - var_S_tie_correction;
+
+    b = toc;
+    fprintf("b = %f\n", b);
 
     
     %% REMOVE SEN TREND ESTIMATE FROM THE DATA
@@ -93,24 +109,41 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
     b_list = [];
     
     element_counter = 1;
+    tic
     for i = 1: n-1
         for j = i+1: n
             m_list(element_counter) = (X(j) - X(i)) / (t(j) - t(i));
             element_counter = element_counter + 1;
         end
     end
+    c1 = toc;
     
+    m_list = gpuArray(m_list);
+    tic
     m_sen = median(m_list);
+    c2 = toc;
+
+    m_sen = gather(m_sen);
 
     b_list = X - m_sen*t;
     b_sen = median(b_list);
+
+
+    m_sen = 3;
+    b_sen = 2;
     
     % Remove sen trend estimate from the data
     X = X - m_sen*t - b_sen;
 
+    c = c1 + c2;
+    fprintf("c1 = %f\n", c1);
+    fprintf("c2 = %f\n", c2);
+    fprintf("c = %f\n", c);
+
 
     %% CALCULATE AUTOCORRELATION VALUES FOR STATISTICALLY SIGNIFICANT LAGS
-    
+    tic
+
     X_rank_order = tiedrank(X);
     z_ac = abs(norminv(alpha_ac / 2));  % norminv() is the inverse of the normcdf() function
     [acf, ~, acf_bounds] = autocorr(X_rank_order, NumLags = n - 1, NumSTD = z_ac);
@@ -125,9 +158,13 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
             rho_lags = [rho_lags, i-1];
         end
     end
-    
+
+    d = toc;
+    fprintf("d = %f\n", d);
+
 
     %% CALCULATE AUTOCORRELATION CORRECTED VARIANCE OF KENDALL TAU
+    tic
 
     % Calculate variance correction factor
     const_factor = 2 / (n * (n-1) * (n-2));
@@ -141,9 +178,13 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
     % Calculate variance corrected for autocorrelation
     var_S = var_S_noAC * (var_AC_correction_factor);
 
+    e = toc;
+    fprintf("e = %f\n", e);
+
 
     %% CHECK FOR STATISTICAL SIGNIFICANCE OF THE KENDALL TAU VALUE
-    
+    tic
+
     % Calculate z-score.
     % z-score = (value - mean) / std_dev. That is, how far is the value from mean as a multiple of the standard deviation.
     % Below the +1 and -1 are for "continuity correction".
@@ -180,6 +221,12 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         % That is there is no trend
         H = 0;
     end
+
+    f = toc;
+    fprintf("f = %f\n", f);
+
+    total_time = a + b + c + d + e + f;
+    fprintf("total_time_1 = %f\n", total_time);
 
 
 end
