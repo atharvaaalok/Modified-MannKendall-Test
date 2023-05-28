@@ -1,4 +1,4 @@
-function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use, print_bool)
+function [tau, z, p, H, time_taken] = Modified_MannKendall_test_Optimized(t, X, alpha, alpha_ac, gpu_shift_critical_size, time_taken)
     
     %% FUNCTION INPUTS AND OUTPUTS
     
@@ -12,11 +12,11 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
     % tau   - The kendall rank correlation coefficient for the timeseries.
     % z     - z-score of the obtained tau value.
     % p     - p-value of the obtained tau value.
-    % H     - Denotes whether to reject the null hypothesis or not. Null Hypothesis: There is no trend in the data. 0 -> retain the null hypothesis, 1 -> reject and increasing trend, -1 -> reject and decreasing trend.
+    % H     - Denotes whether to reject the null hypothesis or not. Null Hypothesis: There is no trend in the data. 0 -> retain the null hypothesis, 1 -> reject and increasing trend, -1 -> reject and decreasing trend, 2 -> if variance turns out to be negative.
 
 
     %% REFERENCES
-
+    
     % 1) Kendall, M. G. (1938). A new measure of rank correlation. Biometrika, 30(1/2), 81-93.
     % 2) Kendall, M. G. (1948). Rank correlation methods.
     % 3) Hamed, K. H., & Rao, A. R. (1998). A modified Mann-Kendall trend test for autocorrelated data. Journal of hydrology, 204(1-4), 182-196.
@@ -33,6 +33,7 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
 
     a = toc;
 
+
     %% CALCULATE THE KENDALL TAU VALUE
     tic
     % Notation taken from: 3) Hamed, K. H., & Rao, A. R. (1998)
@@ -46,8 +47,9 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
     
     % Calculate kendall's rank correlation coefficient - tau
     tau = S / (n * (n-1) / 2);
-    
+
     b = toc;
+
 
     %% CALCULATE VARIANCE OF KENDALL TAU UNCORRECTED FOR AUTOCORRELATION
     tic
@@ -85,6 +87,7 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
     var_S_noAC = var_S_notie - var_S_tie_correction;
 
     c = toc;
+
     
     %% REMOVE SEN TREND ESTIMATE FROM THE DATA
     tic
@@ -104,15 +107,15 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
     
     % Use GPU to find median of large vectors much faster, if the GPU is available.
     % For large arrays GPU is much faster for finding median.
-    % But, f array is too short then GPU takes more time as there is overhead for transferring the array to GPU memory
+    % But, if array is too short then GPU takes more time as there is overhead for transferring the array to GPU memory
     % Experimentally found smallest length of array above which GPU becomes faster is ~450
-    if gpu_use == 1
-        gpu_available = canUseGPU();
-        if gpu_available == 1
+    if length(X) > gpu_shift_critical_size
+%         gpu_available = canUseGPU();
+%         if gpu_available == 1
             m_list = gpuArray(m_list);
             m_sen = median(m_list);
             m_sen = gather(m_sen);
-        end
+%         end
     else
         m_sen = median(m_list);
     end
@@ -122,8 +125,9 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
     
     % Remove sen trend estimate from the data
     X = X - m_sen*t - b_sen;
-    
+
     d = toc;
+
 
     %% CALCULATE AUTOCORRELATION VALUES FOR STATISTICALLY SIGNIFICANT LAGS
     tic
@@ -142,8 +146,9 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
             rho_lags = [rho_lags, i-1];
         end
     end
-    
+
     e = toc;
+
 
     %% CALCULATE AUTOCORRELATION CORRECTED VARIANCE OF KENDALL TAU
     tic
@@ -161,13 +166,14 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
 
     f = toc;
 
+
     %% CHECK FOR STATISTICAL SIGNIFICANCE OF THE KENDALL TAU VALUE
     tic
+    % Since the correction factor for the true variance is an approximation, in rare cases it may turn out to be negative. In that scenario abort the function and return H = 2 as an exception value.
     if var_S < 0
         z = 0;
         p = 0.5;
         H = 2;
-        median_time_taken = 0;
         return
     end
     
@@ -207,25 +213,22 @@ function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use,
         % That is there is no trend
         H = 0;
     end
-    
 
     g = toc;
 
-    MMK_total_time = a + b + c + d + e + f + g;
+    MMK_total_time = a + b + c + d + e + f;
+    
+%     fprintf('Optimized Mann-Kendall Function\n');
+%     fprintf("a = %f\n", a);
+%     fprintf("b = %f\n", b);
+%     fprintf("c = %f\n", c);
+%     fprintf("d = %f\n", d);
+%     fprintf("e = %f\n", e);
+%     fprintf("f = %f\n", f);
+%     fprintf("g = %f\n", g);
+%     fprintf("MMK_total_time = %f\n", MMK_total_time);
 
-    if print_bool == 1
-        fprintf("a = %f\n", a);
-        fprintf("b = %f\n", b);
-        fprintf("c = %f\n", c);
-        fprintf("d = %f\n", d);
-        median_time_taken = d;
-        fprintf("e = %f\n", e);
-        fprintf("f = %f\n", f);
-        fprintf("g = %f\n", g);
-        fprintf("MMK_total_time = %f\n", MMK_total_time);
-    else
-        median_time_taken = d;
-    end
+    time_taken = [time_taken; a, b, c, d, e, f];
 
 
 end
