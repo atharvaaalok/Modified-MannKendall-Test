@@ -1,4 +1,4 @@
-function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
+function [tau, z, p, H] = Modified_MannKendall_test_Optimized(t, X, alpha, alpha_ac, gpu_shift_critical_size)
     
     %% FUNCTION INPUTS AND OUTPUTS
     
@@ -16,7 +16,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% REFERENCES
-
+    
     % 1) Kendall, M. G. (1938). A new measure of rank correlation. Biometrika, 30(1/2), 81-93.
     % 2) Kendall, M. G. (1948). Rank correlation methods.
     % 3) Hamed, K. H., & Rao, A. R. (1998). A modified Mann-Kendall trend test for autocorrelated data. Journal of hydrology, 204(1-4), 182-196.
@@ -25,7 +25,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CONVERT DATA INTO ROW VECTOR
-    
+
     % Convert input time and timeseries vectors to row vectors
     X = reshape(X, 1, length(X));
     t = reshape(t, 1, length(t));
@@ -33,7 +33,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CALCULATE THE KENDALL TAU VALUE
-    
+
     % Notation taken from: 3) Hamed, K. H., & Rao, A. R. (1998)
     S = 0;
     
@@ -48,7 +48,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CALCULATE VARIANCE OF KENDALL TAU UNCORRECTED FOR AUTOCORRELATION
-    
+
     % Correction for tied ranks taken from:
     % 2) Kendall, M. G. (1948) edition 5, chapter 4, page 66
     % 4) Hamed, K. H. (2008)
@@ -84,11 +84,10 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
     
     %% REMOVE SEN TREND ESTIMATE FROM THE DATA
-    
+
     % Procedure and rationale for trend removal taken from:
     % 5) Yue, S., & Wang, C. (2004)
     % Wikipedia: Theil–Sen estimator, https://en.wikipedia.org/wiki/Theil-Sen_estimator
-    % Basically, the presence of a trend leads to wrong estimation of the actual autocorrelation present. Therefore, the trend must first be removed before estimating the autocorrelation.
     m_list = zeros(1, (n * (n-1) / 2));
     b_list = [];
     
@@ -100,7 +99,20 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         end
     end
     
-    m_sen = median(m_list);
+    % Use GPU to find median of large vectors much faster, if the GPU is available.
+    % For large arrays GPU is much faster for finding median.
+    % But, if array is too short then GPU takes more time as there is overhead for transferring the array to GPU memory
+    % Experimentally found smallest length of array above which GPU becomes faster is ~450
+    if length(X) > gpu_shift_critical_size
+        gpu_available = canUseGPU();
+        if gpu_available == 1
+            m_list = gpuArray(m_list);
+            m_sen = median(m_list);
+            m_sen = gather(m_sen);
+        end
+    else
+        m_sen = median(m_list);
+    end
 
     b_list = X - m_sen*t;
     b_sen = median(b_list);
@@ -110,9 +122,10 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CALCULATE AUTOCORRELATION VALUES FOR STATISTICALLY SIGNIFICANT LAGS
-    
+
     X_rank_order = tiedrank(X);
     z_ac = abs(norminv(alpha_ac / 2));  % norminv() is the inverse of the normcdf() function
+    
     [acf, ~, acf_bounds] = autocorr(X_rank_order, NumLags = n - 1, NumSTD = z_ac);
     
     % Retain only those lags for which the autocorrelation value is statistically significant
@@ -125,7 +138,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
             rho_lags = [rho_lags, i-1];
         end
     end
-    
+
 
     %% CALCULATE AUTOCORRELATION CORRECTED VARIANCE OF KENDALL TAU
 
@@ -151,7 +164,7 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         H = 2;
         return
     end
-
+    
     % Calculate z-score.
     % z-score = (value - mean) / std_dev. That is, how far is the value from mean as a multiple of the standard deviation.
     % Below the +1 and -1 are for "continuity correction".

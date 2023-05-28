@@ -1,4 +1,4 @@
-function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
+function [tau, z, p, H, median_time_taken] = MMK(t, X, alpha, alpha_ac, gpu_use, print_bool, median_time_taken)
     
     %% FUNCTION INPUTS AND OUTPUTS
     
@@ -25,12 +25,13 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
 
 
     %% CONVERT DATA INTO ROW VECTOR
-    
+    tic
     % Convert input time and timeseries vectors to row vectors
     X = reshape(X, 1, length(X));
     t = reshape(t, 1, length(t));
     n = length(X);
 
+    a = toc;
 
     %% CALCULATE THE KENDALL TAU VALUE
     tic
@@ -43,20 +44,11 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         end
     end
     
-%     for i = 1: n-1
-%         j = i+1: n;
-%         phew = sign(X(j) - X(i));
-%         S = S + sum(phew);
-%     end
-    
-    
     % Calculate kendall's rank correlation coefficient - tau
     tau = S / (n * (n-1) / 2);
-
-    a = toc;
-    fprintf("a = %f\n", a);
-
     
+    b = toc;
+
     %% CALCULATE VARIANCE OF KENDALL TAU UNCORRECTED FOR AUTOCORRELATION
     tic
     % Correction for tied ranks taken from:
@@ -73,8 +65,6 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
     Y = [Y, Y(end) + 1];
     prev_counter = 1;
     current_counter = 1;
-
-    
     for i_Y = 2: n+1
         if Y(i_Y) == Y(i_Y - 1)
             current_counter = current_counter + 1;
@@ -88,64 +78,58 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         end
 
     end
-    
 
     var_S_tie_correction = sum(tied_ranks .* (tied_ranks - 1) .* (2*tied_ranks + 5) / 18);
 
     % Calculate variance corrected for ties but without considering autocorrelation
     var_S_noAC = var_S_notie - var_S_tie_correction;
 
-    b = toc;
-    fprintf("b = %f\n", b);
-
+    c = toc;
     
     %% REMOVE SEN TREND ESTIMATE FROM THE DATA
-    
+    tic
     % Procedure and rationale for trend removal taken from:
     % 5) Yue, S., & Wang, C. (2004)
     % Wikipedia: Theil–Sen estimator, https://en.wikipedia.org/wiki/Theil-Sen_estimator
-    % Basically, the presence of a trend leads to wrong estimation of the actual autocorrelation present. Therefore, the trend must first be removed before estimating the autocorrelation.
     m_list = zeros(1, (n * (n-1) / 2));
     b_list = [];
     
     element_counter = 1;
-    tic
     for i = 1: n-1
         for j = i+1: n
             m_list(element_counter) = (X(j) - X(i)) / (t(j) - t(i));
             element_counter = element_counter + 1;
         end
     end
-    c1 = toc;
     
-    m_list = gpuArray(m_list);
-    tic
-    m_sen = median(m_list);
-    c2 = toc;
-
-    m_sen = gather(m_sen);
+    % Use GPU to find median of large vectors much faster, if the GPU is available.
+    % For large arrays GPU is much faster for finding median.
+    % But, f array is too short then GPU takes more time as there is overhead for transferring the array to GPU memory
+    % Experimentally found smallest length of array above which GPU becomes faster is ~450
+    if gpu_use == 1
+        gpu_available = canUseGPU();
+        if gpu_available == 1
+            m_list = gpuArray(m_list);
+            m_sen = median(m_list);
+            m_sen = gather(m_sen);
+        end
+    else
+        m_sen = median(m_list);
+    end
 
     b_list = X - m_sen*t;
     b_sen = median(b_list);
-
-
-    m_sen = 3;
-    b_sen = 2;
     
     % Remove sen trend estimate from the data
     X = X - m_sen*t - b_sen;
-
-    c = c1 + c2;
-    fprintf("c1 = %f\n", c1);
-    fprintf("c2 = %f\n", c2);
-    fprintf("c = %f\n", c);
-
+    
+    d = toc;
 
     %% CALCULATE AUTOCORRELATION VALUES FOR STATISTICALLY SIGNIFICANT LAGS
     tic
-
     X_rank_order = tiedrank(X);
     z_ac = abs(norminv(alpha_ac / 2));  % norminv() is the inverse of the normcdf() function
+    
     [acf, ~, acf_bounds] = autocorr(X_rank_order, NumLags = n - 1, NumSTD = z_ac);
     
     % Retain only those lags for which the autocorrelation value is statistically significant
@@ -158,14 +142,11 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
             rho_lags = [rho_lags, i-1];
         end
     end
-
-    d = toc;
-    fprintf("d = %f\n", d);
-
+    
+    e = toc;
 
     %% CALCULATE AUTOCORRELATION CORRECTED VARIANCE OF KENDALL TAU
     tic
-
     % Calculate variance correction factor
     const_factor = 2 / (n * (n-1) * (n-2));
     rho_factor_sum = 0;
@@ -178,13 +159,17 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
     % Calculate variance corrected for autocorrelation
     var_S = var_S_noAC * (var_AC_correction_factor);
 
-    e = toc;
-    fprintf("e = %f\n", e);
-
+    f = toc;
 
     %% CHECK FOR STATISTICAL SIGNIFICANCE OF THE KENDALL TAU VALUE
     tic
-
+    if var_S < 0
+        z = 0;
+        p = 0.5;
+        H = 2;
+        return
+    end
+    
     % Calculate z-score.
     % z-score = (value - mean) / std_dev. That is, how far is the value from mean as a multiple of the standard deviation.
     % Below the +1 and -1 are for "continuity correction".
@@ -221,12 +206,25 @@ function [tau, z, p, H] = Modified_MannKendall_test(t, X, alpha, alpha_ac)
         % That is there is no trend
         H = 0;
     end
+    
 
-    f = toc;
-    fprintf("f = %f\n", f);
+    g = toc;
 
-    total_time = a + b + c + d + e + f;
-    fprintf("total_time_1 = %f\n", total_time);
+    MMK_total_time = a + b + c + d + e + f + g;
+
+    if print_bool == 1
+        fprintf("a = %f\n", a);
+        fprintf("b = %f\n", b);
+        fprintf("c = %f\n", c);
+        fprintf("d = %f\n", d);
+        median_time_taken = [median_time_taken, d];
+        fprintf("e = %f\n", e);
+        fprintf("f = %f\n", f);
+        fprintf("g = %f\n", g);
+        fprintf("MMK_total_time = %f\n", MMK_total_time);
+    else
+        median_time_taken = [median_time_taken, d];
+    end
 
 
 end
