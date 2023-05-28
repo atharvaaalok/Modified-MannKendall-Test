@@ -157,7 +157,7 @@ function [tau, z, p, H] = Modified_MannKendall_test_Optimized(t, X, alpha, alpha
 
     %% CHECK FOR STATISTICAL SIGNIFICANCE OF THE KENDALL TAU VALUE
     
-    % Since the correction factor for the true variance is an approximation, in rare cases it may turn out to be negative. In that scenario abort the function and return H = 2
+    % Since the correction factor for the true variance is an approximation, in rare cases it may turn out to be negative. In that scenario abort the function and return H = 2 as an exception value.
     if var_S < 0
         z = 0;
         p = 0.5;
