@@ -1,10 +1,9 @@
 # Modified-MannKendall-Test
 
-I am just trying to get my github working again...What is happening???
-
 Released on MATLAB FileExchange
 [![View Modified-MannKendall-Test on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://in.mathworks.com/matlabcentral/fileexchange/130004-modified-mannkendall-test)
 
+To get started refer the file [demo.m](demo.m)
 ## Use
 
 The modified Mann-Kendall test is a hypothesis test that determines whether a given sequence of data has a trend.<br/>
